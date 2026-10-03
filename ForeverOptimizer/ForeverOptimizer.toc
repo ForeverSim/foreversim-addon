@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: Forever Optimizer
+## Notes: Exports your character to the Forever Optimizer website and records how creatures hit you. /optimizer
+## Version: 0.1.0
+## SavedVariables: ForeverOptimizerDB
+
+Safe.lua
+Json.lua
+ItemLink.lua
+Character.lua
+Observations.lua
+Check.lua
+UI.lua
+Core.lua
