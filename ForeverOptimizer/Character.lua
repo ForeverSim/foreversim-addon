@@ -83,6 +83,34 @@ local function equipment(r)
 	return items
 end
 
+-- What is in the bags: the backpack (0) and the four bags after it, slot by slot.
+local LAST_BAG = 4
+
+local function bags(r)
+	local slotCount = Safe.api("C_Container", "GetContainerNumSlots")
+	local itemInfo = Safe.api("C_Container", "GetContainerItemInfo")
+	local items = {}
+	for bag = 0, LAST_BAG do
+		for slot = 1, r:call("C_Container.GetContainerNumSlots", slotCount, bag) or 0 do
+			local info = r:call("C_Container.GetContainerItemInfo", itemInfo, bag, slot)
+			if type(info) == "table" and info.itemID ~= nil then
+				local link = ItemLink.parse(info.hyperlink)
+				items[#items + 1] = {
+					bag = bag,
+					slot = slot,
+					item_id = info.itemID,
+					count = info.stackCount,
+					quality = info.quality,
+					bound = info.isBound,
+					suffix_id = link and link.suffix_id,
+					enchant_id = link and link.enchant_id,
+				}
+			end
+		end
+	end
+	return items
+end
+
 local function activeTalentConfig(r)
 	local specGroup = r:call("C_SpecializationInfo.GetActiveSpecGroup", Safe.api("C_SpecializationInfo", "GetActiveSpecGroup"))
 	local configID
@@ -422,6 +450,24 @@ function Character.readAppearance()
 	return choices
 end
 
+-- The talents and gear a fight is fought with: small enough to keep beside the fights, and
+-- what the simulator needs to play the same fight (the full snapshot is only made on request).
+function Character.build(r)
+	local _, classFile = r:call("UnitClass", UnitClass, "player")
+	local nodes = {}
+	for _, node in ipairs(talents(r).nodes) do
+		nodes[#nodes + 1] = { node.node_id, node.rank }
+	end
+	table.sort(nodes, function(a, b)
+		return a[1] < b[1]
+	end)
+	local worn = Json.object()
+	for _, item in ipairs(equipment(r)) do
+		worn[tostring(item.slot)] = { item_id = item.item_id, enchant_id = item.enchant_id, suffix_id = item.suffix_id }
+	end
+	return { class = classFile, talents = nodes, equipment = worn }
+end
+
 -- Returns the snapshot table, or nil and a reason when it cannot be read now.
 function Character.snapshot(appearance)
 	if InCombatLockdown and InCombatLockdown() then
@@ -435,6 +481,7 @@ function Character.snapshot(appearance)
 		client = client(r),
 		character = identity(r),
 		equipment = equipment(r),
+		bags = bags(r),
 		talents = talents(r),
 		professions = professions(r),
 		skills = skills(r),

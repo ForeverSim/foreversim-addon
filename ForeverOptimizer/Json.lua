@@ -40,7 +40,8 @@ local function encodeNumber(value)
 		return "null"
 	end
 	if value == math.floor(value) and math.abs(value) < 2 ^ 53 then
-		return string.format("%d", value)
+		-- Not %d: the client refuses it for whole numbers beyond 32 bits.
+		return string.format("%.0f", value)
 	end
 	return string.format("%.14g", value)
 end

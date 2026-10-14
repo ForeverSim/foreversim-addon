@@ -63,3 +63,62 @@ function UI.showExport(text)
 	frame.edit:SetFocus()
 	frame.edit:HighlightText()
 end
+
+-- The question asked once, when the game starts: may fights be recorded? Nothing is recorded
+-- before the player says yes. Closing the window without an answer asks again next time.
+local question
+
+local QUESTION = table.concat({
+	"Forever Optimizer can record what happens as you play, to make the simulator more accurate:",
+	"",
+	"- how hard creatures hit you, and how much damage it takes to kill them",
+	"- where on the map you met them, and what they and the nodes you gather from dropped",
+	"- the talents and gear you fought with",
+	"",
+	"Nothing about other players is recorded. Nothing leaves your computer: it is kept in the addon's own saved file, which you can choose to send.",
+	"",
+	"You can change your mind at any time: /optimizer pause and /optimizer resume.",
+}, "\n")
+
+function UI.askToRecord(onAnswer)
+	if question == nil then
+		question = CreateFrame("Frame", "ForeverOptimizerQuestionFrame", UIParent, "BasicFrameTemplateWithInset")
+		question:SetSize(460, 300)
+		question:SetPoint("CENTER")
+		question:SetFrameStrata("DIALOG")
+		question:SetMovable(true)
+		question:EnableMouse(true)
+		question:RegisterForDrag("LeftButton")
+		question:SetScript("OnDragStart", question.StartMoving)
+		question:SetScript("OnDragStop", question.StopMovingOrSizing)
+
+		question.title = question:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		question.title:SetPoint("TOP", 0, -6)
+		question.title:SetText("Forever Optimizer")
+
+		question.text = question:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		question.text:SetPoint("TOPLEFT", 18, -36)
+		question.text:SetPoint("TOPRIGHT", -18, -36)
+		question.text:SetJustifyH("LEFT")
+		question.text:SetText(QUESTION)
+
+		question.start = CreateFrame("Button", "ForeverOptimizerQuestionStart", question, "UIPanelButtonTemplate")
+		question.start:SetSize(160, 26)
+		question.start:SetPoint("BOTTOMLEFT", 40, 18)
+		question.start:SetText("Start recording")
+
+		question.decline = CreateFrame("Button", "ForeverOptimizerQuestionDecline", question, "UIPanelButtonTemplate")
+		question.decline:SetSize(160, 26)
+		question.decline:SetPoint("BOTTOMRIGHT", -40, 18)
+		question.decline:SetText("Do not record")
+	end
+	question.start:SetScript("OnClick", function()
+		question:Hide()
+		onAnswer(true)
+	end)
+	question.decline:SetScript("OnClick", function()
+		question:Hide()
+		onAnswer(false)
+	end)
+	question:Show()
+end

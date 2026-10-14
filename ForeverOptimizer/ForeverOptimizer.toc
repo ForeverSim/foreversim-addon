@@ -1,7 +1,8 @@
 ## Interface: 16001
 ## Title: Forever Optimizer
-## Notes: Exports your character to the Forever Optimizer website and records how creatures hit you. /optimizer
-## Version: 0.1.0
+## IconTexture: Interface\AddOns\ForeverOptimizer\Logo.tga
+## Notes: Exports your character to the Forever Optimizer website, records how creatures hit you, and shows a tank who is attacking them. /optimizer
+## Version: 0.3.0
 ## SavedVariables: ForeverOptimizerDB
 
 Safe.lua
@@ -9,6 +10,8 @@ Json.lua
 ItemLink.lua
 Character.lua
 Observations.lua
+Items.lua
+Threat.lua
 Check.lua
 UI.lua
 Core.lua

@@ -49,6 +49,10 @@ local function targetProbes(unit)
 		damage = Safe.probe(UnitDamage, unit),
 		-- Is the player this unit's tank? Attribution of hits depends on it being readable.
 		threat_on_player = Safe.probe(UnitThreatSituation, "player", unit),
+		-- A creature's death and whether it was already fighting: what its health is worked out from.
+		is_dead = Safe.probe(UnitIsDead, unit),
+		in_combat = Safe.probe(UnitAffectingCombat, unit),
+		health_percent = Safe.probe(UnitHealthPercent, unit),
 	}
 end
 
@@ -116,6 +120,18 @@ function Check.run()
 		enemy_nameplates_shown = Safe.probe(Safe.api("C_CVar", "GetCVarBool"), "nameplateShowEnemies"),
 		damage_meter = meterProbes(),
 		death_recap = deathRecapFields(),
+		-- Map, x and y as the addon would record them: "nil" where the client gives none.
+		position = Safe.probe(function()
+			local where = ns.Observations.position(Safe.report())
+			return where and where.map_id, where and where.x, where and where.y
+		end),
+		bags = Safe.probe(Safe.api("C_Container", "GetContainerNumSlots"), 0),
+		loot = {
+			count = GetNumLootItems ~= nil,
+			slot_info = GetLootSlotInfo ~= nil,
+			slot_link = GetLootSlotLink ~= nil,
+			source_info = GetLootSourceInfo ~= nil,
+		},
 		encoding = {
 			serialize_json = Safe.api("C_EncodingUtil", "SerializeJSON") ~= nil,
 			compress = Safe.api("C_EncodingUtil", "CompressString") ~= nil,
