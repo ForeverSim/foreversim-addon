@@ -647,6 +647,9 @@ local function finish(fight, r)
 	end
 	store.next_fight_id = (store.next_fight_id or 0) + 1
 	fight.id = store.next_fight_id
+	if ns.Stats ~= nil then
+		ns.Stats.onFight(fight)
+	end
 	store.fights[#store.fights + 1] = fight
 	store.hits_stored = (store.hits_stored or 0) + storedHits(fight)
 	trim(store)

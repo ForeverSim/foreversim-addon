@@ -2,7 +2,7 @@
 
 local addonName, ns = ...
 
-ns.VERSION = "0.3.0"
+ns.VERSION = "0.3.1"
 -- Version of the snapshot payload. Bump it on any change the importer must know about.
 ns.SNAPSHOT_FORMAT = "forever-optimizer/snapshot/1"
 -- Version of the SavedVariables layout for observations. 2: hit rows gained `attackers` and
@@ -45,6 +45,7 @@ local function initDB()
 	store.loots = store.loots or {}
 	store.builds = store.builds or {}
 	store.items = store.items or {}
+	ns.Options.load(store)
 	ns.db = store
 end
 
@@ -139,8 +140,10 @@ end
 
 -- The player's answer, from the window or from /optimizer pause and resume. It is remembered.
 function ns.setRecording(on)
+	ns.Stats.tick() -- the time recorded so far is added before the switch
 	ns.db.recording_choice = on and "yes" or "no"
 	ns.db.collecting = on
+	ns.Stats.tick()
 	if on then
 		ns.Observations.markBuildChanged()
 		ns.Observations.refreshProfile()
@@ -192,6 +195,20 @@ local function status()
 	print("data is saved in WTF/Account/<account>/SavedVariables/" .. addonName .. ".lua on logout or /reload.")
 end
 
+ns.export = export
+
+-- Empty the saved file of everything recorded (the settings and the statistics stay).
+function ns.clearRecorded()
+	ns.db.fights, ns.db.creatures, ns.db.hits_stored, ns.db.fights_dropped = {}, {}, 0, 0
+	ns.db.loots, ns.db.loots_dropped, ns.db.builds = {}, 0, {}
+	ns.db.items, ns.db.items_count, ns.db.items_dropped = {}, 0, 0
+	ns.Observations.markBuildChanged()
+end
+
+local function togglePanel()
+	ns.Panel.toggle()
+end
+
 local COMMANDS = {
 	[""] = export,
 	export = export,
@@ -219,17 +236,17 @@ local COMMANDS = {
 			print("type /optimizer clear confirm to delete all recorded fights, creatures, loot and items.")
 			return
 		end
-		ns.db.fights, ns.db.creatures, ns.db.hits_stored, ns.db.fights_dropped = {}, {}, 0, 0
-		ns.db.loots, ns.db.loots_dropped, ns.db.builds = {}, 0, {}
-		ns.db.items, ns.db.items_count, ns.db.items_dropped = {}, 0, 0
-		ns.Observations.markBuildChanged()
+		ns.clearRecorded()
 		print("recorded fights, creatures, loot and items deleted.")
 	end,
 	threat = function(argument)
 		print(ns.Threat.command(argument))
 	end,
+	panel = togglePanel,
+	options = togglePanel,
+	settings = togglePanel,
 	help = function()
-		print("/optimizer: export this character. /optimizer check | status | pause | resume | clear | threat")
+		print("/optimizer: export this character. /optimizer panel | check | status | pause | resume | clear | threat")
 	end,
 }
 
@@ -250,6 +267,7 @@ function handlers.ADDON_LOADED(name)
 		return
 	end
 	initDB()
+	ns.Threat.init()
 	events:UnregisterEvent("ADDON_LOADED")
 end
 
@@ -262,9 +280,37 @@ end
 function handlers.PLAYER_LOGIN()
 	greet()
 	ns.Items.watchTooltips()
+	ns.Panel.register()
+end
+
+function handlers.PLAYER_LOGOUT()
+	ns.Stats.tick()
+end
+
+function handlers.PLAYER_MONEY()
+	ns.Stats.onMoney()
+end
+
+function handlers.PLAYER_XP_UPDATE(unit)
+	if unit == nil or unit == "player" then
+		ns.Stats.onXP()
+	end
+end
+
+function handlers.LOOT_SLOT_CLEARED(slot)
+	ns.Stats.onLootSlotCleared(slot)
+end
+
+function handlers.LOOT_CLOSED()
+	ns.Stats.onLootClosed()
+end
+
+function handlers.MERCHANT_CLOSED()
+	ns.Stats.onMerchantClosed()
 end
 
 function handlers.PLAYER_ENTERING_WORLD()
+	ns.Stats.start()
 	buildMayHaveChanged()
 	ns.Items.scanWorn()
 	ns.Items.scanBags()
@@ -299,6 +345,7 @@ handlers.PLAYER_ROLES_ASSIGNED = handlers.UNIT_THREAT_SITUATION_UPDATE
 
 function handlers.BAG_UPDATE_DELAYED()
 	ns.Items.scanBags()
+	ns.Stats.onBagsChanged()
 end
 
 function handlers.BANKFRAME_OPENED()
@@ -306,10 +353,13 @@ function handlers.BANKFRAME_OPENED()
 end
 
 function handlers.MERCHANT_SHOW()
+	ns.Stats.onMerchantShow()
 	ns.Items.scanMerchant()
 end
 
-handlers.MERCHANT_UPDATE = handlers.MERCHANT_SHOW
+function handlers.MERCHANT_UPDATE()
+	ns.Items.scanMerchant()
+end
 
 function handlers.UNIT_COMBAT(unit, event, flagText, amount, schoolMask)
 	ns.Observations.onUnitCombat(unit, event, flagText, amount, schoolMask)
@@ -342,6 +392,7 @@ end
 
 function handlers.LOOT_OPENED()
 	ns.Observations.onLootOpened()
+	ns.Stats.onLootOpened()
 end
 
 function handlers.UNIT_SPELLCAST_SUCCEEDED(unit, castGUID, spellID)
