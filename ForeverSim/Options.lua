@@ -8,11 +8,18 @@ ns.Options = Options
 
 Options.DEFAULTS = {
 	threat = {
-		-- "auto": shown as a group's tank; "on": always in a fight; "off": never.
+		-- "auto": shown in a fight when in a group; "on": in every fight; "off": never.
 		mode = "auto",
+		-- "auto": the role the group gave the player; or "tank", "damage", "healer".
+		role = "auto",
 		scale = 1.0,
 		width = 260,
 		rows = 10,
+		-- Pixels per row (14 to 32).
+		rowHeight = 18,
+		-- Threat bars behind the rows, and the current target in large print above them.
+		bars = true,
+		focus = true,
 		-- Background darkness, 0 (none) to 1.
 		opacity = 0.6,
 		locked = false,

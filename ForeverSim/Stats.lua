@@ -1,8 +1,8 @@
--- What has been recorded, and what the player got while recording: kept in `stats` of the
--- saved file and shown on the control panel. Counted only while recording is on.
+-- What the player got while playing with the addon: kept in `stats` of the saved file and shown
+-- on the control panel. Nothing here is sent anywhere or needed by the site.
 --
---   seconds          time spent recording (`since`: when recording was first turned on)
---   fights, kills, deaths
+--   seconds          time played with the addon on (`since`: when it first counted)
+--   fights, deaths   fights entered, deaths
 --   money_looted     copper gained while a loot window was open (or just after it closed)
 --   money_sold       copper gained at a merchant
 --   items_looted     item ID -> how many were taken from loot windows; by_quality: per quality
@@ -45,7 +45,7 @@ end
 
 local function stats()
 	local store = ns.db
-	if store == nil or not store.collecting then
+	if store == nil then
 		return nil
 	end
 	local kept = store.stats
@@ -64,7 +64,7 @@ local function add(kept, name, amount)
 	kept[name] = (kept[name] or 0) + amount
 end
 
--- Add the time since the clock last ran to `seconds`, and restart it when recording is on.
+-- Add the time since the clock last ran to `seconds`, and restart it.
 function Stats.tick()
 	local kept = stats()
 	if kept ~= nil and countingSince ~= nil then
@@ -90,14 +90,16 @@ function Stats.start()
 	Stats.tick()
 end
 
-function Stats.onFight(fight)
+function Stats.onFightStart()
 	local kept = stats()
-	if kept == nil then
-		return
+	if kept ~= nil then
+		add(kept, "fights", 1)
 	end
-	add(kept, "fights", 1)
-	add(kept, "kills", type(fight.kills) == "table" and #fight.kills or 0)
-	if fight.death ~= nil then
+end
+
+function Stats.onDeath()
+	local kept = stats()
+	if kept ~= nil then
 		add(kept, "deaths", 1)
 	end
 end
@@ -223,14 +225,9 @@ function Stats.onXP()
 	lastXP, lastXPMax, lastLevel = xp, xpMax, level
 end
 
--- The figures the control panel shows, worked out from the saved file and `stats`.
+-- The figures the control panel shows, from `stats`.
 function Stats.summary()
-	local store = ns.db or {}
-	local kept = type(store.stats) == "table" and store.stats or {}
-	local creatures = 0
-	for _ in pairs(store.creatures or {}) do
-		creatures = creatures + 1
-	end
+	local kept = ns.db and type(ns.db.stats) == "table" and ns.db.stats or {}
 	local distinctLooted, distinctSold = 0, 0
 	for _ in pairs(kept.items_looted or {}) do
 		distinctLooted = distinctLooted + 1
@@ -239,17 +236,10 @@ function Stats.summary()
 		distinctSold = distinctSold + 1
 	end
 	return {
-		recording = store.collecting == true,
 		since = kept.since,
 		seconds = Stats.seconds(),
 		fights = kept.fights or 0,
-		fights_kept = #(store.fights or {}),
-		kills = kept.kills or 0,
 		deaths = kept.deaths or 0,
-		hits = store.hits_stored or 0,
-		creatures = creatures,
-		loot_windows = #(store.loots or {}),
-		gear_seen = store.items_count or 0,
 		money_looted = kept.money_looted or 0,
 		money_sold = kept.money_sold or 0,
 		items_looted = kept.items_looted_count or 0,

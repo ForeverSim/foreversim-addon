@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: ForeverSim Macros
+## IconTexture: Interface\AddOns\ForeverSimMacros\Logo.tga
+## Notes: Make macros by picking what they should do, with every part explained for new players. Open it from its button or Options, AddOns.
+## Version: 0.1.0
+## SavedVariables: ForeverSimMacrosDB
+
+Safe.lua
+Reference.lua
+Macro.lua
+Spells.lua
+Picker.lua
+Window.lua
+Core.lua

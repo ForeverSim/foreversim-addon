@@ -1,13 +1,15 @@
--- The control panel: recording on and off, the threat window's settings, and what has been
--- recorded so far. /optimizer panel opens it, and so does its entry in the game's AddOns options.
--- New pages are added to PAGES.
+-- The control panel: the character export, the threat window's settings, statistics, recording
+-- (when the recording addon is installed) and help. /foreversim panel opens it, and so does its
+-- entry in the game's AddOns options. New pages are added to PAGES; each starts by saying what
+-- it is for.
 
 local _, ns = ...
 
 local Panel = {}
 ns.Panel = Panel
 
-local WIDTH, HEIGHT = 460, 470
+local WIDTH, HEIGHT = 560, 760
+local TAB_WIDTH = 102
 local frame
 local pages, tabs = {}, {}
 -- Controls by name, so their state can be refreshed (and tested).
@@ -125,26 +127,51 @@ local function stack(page, control, gap, indent)
 	return control
 end
 
+-- A paragraph that says what a page or a setting is for.
+local function explain(page, words, height)
+	local paragraph = text(page, "GameFontHighlightSmall", words)
+	paragraph:SetWidth(WIDTH - 60)
+	paragraph:SetJustifyV("TOP")
+	return stack(page, paragraph, height or 40)
+end
+
 -- --- Pages --------------------------------------------------------------------------------------
 
-local function recordingPage(page)
-	page.status = stack(page, text(page, "GameFontNormalLarge"), 30)
-	page.toggle = stack(page, button(page, "", 180, function()
-		ns.setRecording(not (ns.db and ns.db.collecting))
-		Panel.refresh()
-	end), 34)
-	Panel.controls["recording"] = page.toggle
+local function characterPage(page)
+	explain(page, "Export reads your character as it is now (gear, talents, professions, stats and spellbook) and shows it as text. Copy it and paste it on the site's dashboard: that is how your character gets onto the site. Nothing leaves the game by itself.", 56)
 	stack(page, button(page, "Export character", 180, function()
 		ns.export()
 	end), 40)
-	local note = stack(page, text(page, "GameFontHighlightSmall"), 70)
-	note:SetWidth(WIDTH - 60)
-	note:SetText("Fights, creatures, loot and the gear you see are written to the saved file when you log out or type /reload. Send that file to have it added to the site: WTF/Account/<account>/SavedVariables/ForeverOptimizer.lua")
+	explain(page, "Leave combat first: the game hides stats during a fight. The same export is /foreversim.", 30)
+end
+
+-- The recording addon's page: only there when ForeverSim Recorder is installed.
+local function recorder()
+	local api = _G.ForeverSimRecorder
+	return type(api) == "table" and api or nil
+end
+
+local function recordingPage(page)
+	explain(page, "ForeverSim Recorder is installed: it records how creatures fight, what drops and the gear you see, for the site's simulator. It only records while it is on, and nothing leaves your computer until you upload its file on the site's recording page.", 56)
+	page.status = stack(page, text(page, "GameFontNormalLarge"), 30)
+	page.toggle = stack(page, button(page, "", 180, function()
+		local api = recorder()
+		if api ~= nil then
+			api.setRecording(not api.isRecording())
+		end
+		Panel.refresh()
+	end), 34)
+	Panel.controls["recording"] = page.toggle
+	page.counts = stack(page, text(page, "GameFontHighlight"), 110)
+	page.counts:SetWidth(WIDTH - 60)
+	page.counts:SetJustifyV("TOP")
+	explain(page, "The game writes the file when you log out or type /reload: WTF/Account/<account>/SavedVariables/ForeverSimRecorder.lua. Upload it, then empty it here so the next file only holds what is new (fights already uploaded are counted once anyway).", 56)
 	-- Emptying the file takes two clicks.
 	local armed = false
 	page.clear = stack(page, button(page, "Delete recorded data", 180, function(self)
-		if armed then
-			ns.clearRecorded()
+		local api = recorder()
+		if armed and api ~= nil then
+			api.clear()
 			armed = false
 			self:SetText("Delete recorded data")
 			Panel.refresh()
@@ -155,18 +182,40 @@ local function recordingPage(page)
 	end), 30)
 	Panel.controls["clear"] = page.clear
 	page.refresh = function()
-		local on = ns.db and ns.db.collecting
+		local api = recorder()
+		if api == nil then
+			return
+		end
+		local on = api.isRecording()
 		page.status:SetText(on and "Recording is on" or "Recording is off")
 		page.toggle:SetText(on and "Stop recording" or "Start recording")
+		local kept = api.summary()
+		page.counts:SetText(table.concat({
+			string.format("Time recorded: %s", ns.Stats.duration(kept.seconds)),
+			string.format("Fights: %d (%d in the file)", kept.fights, kept.fights_kept),
+			string.format("Hits: %d   Creatures: %d", kept.hits, kept.creatures),
+			string.format("Loot windows: %d   Gear seen: %d", kept.loot_windows, kept.gear_seen),
+		}, "\n"))
 	end
 end
 
 local function threatPage(page)
+	explain(page, table.concat({
+		"Every enemy fighting you or your group, who it is on, and your threat on it.",
+		"A tank is warned when an enemy leaves them: red rows, NOT ON YOU on its nameplate, LOST AGGRO.",
+		"Damage and healers are warned before they pull (SLOW DOWN: ease off, or use something like Fade)",
+		"and when they do (AGGRO ON YOU). Hover a row for everyone's threat; click a nameplate to target.",
+	}, " "), 70)
 	stack(page, choice(page, "Show the threat window", "threat.mode", {
-		{ value = "auto", label = "As a group's tank" },
+		{ value = "auto", label = "In a group" },
 		{ value = "on", label = "Always" },
 		{ value = "off", label = "Never" },
-	}), 50)
+	}), 46)
+	stack(page, choice(page, "Your role (it decides what you are warned about)", "threat.role", {
+		{ value = "auto", label = "The group's choice" },
+		{ value = "tank", label = "Tank" },
+		{ value = "damage", label = "Damage or healer" },
+	}), 46)
 	stack(page, slider(page, "Size", "threat.scale", 0.5, 2.0, 0.05, function(v)
 		return string.format("%d%%", math.floor(v * 100 + 0.5))
 	end), 44)
@@ -176,20 +225,30 @@ local function threatPage(page)
 	stack(page, slider(page, "Rows", "threat.rows", 3, 20, 1, function(v)
 		return tostring(v)
 	end), 44)
+	stack(page, slider(page, "Row height", "threat.rowHeight", 14, 32, 1, function(v)
+		return tostring(v) .. " px"
+	end), 44)
 	stack(page, slider(page, "Background", "threat.opacity", 0, 1, 0.05, function(v)
 		return string.format("%d%%", math.floor(v * 100 + 0.5))
 	end), 48)
+	stack(page, check(page, "Threat bars (100% is where an enemy turns)", "threat.bars"), 26)
+	stack(page, check(page, "Your target in large print at the top", "threat.focus"), 26)
 	stack(page, check(page, "Lock its place", "threat.locked"), 26)
 	stack(page, check(page, "Warning in the middle of the screen when an enemy turns away", "threat.alert"), 26)
 	stack(page, check(page, "Sound with the warning", "threat.sound"), 26)
 	stack(page, check(page, "Mark the nameplates of enemies not on you", "threat.markers"), 32)
-	local preview = button(page, "Preview", 130, function(self)
+	explain(page, "Preview shows made-up rows so you can place and size the window out of combat; drag it by its title.", 28)
+	local preview = button(page, "Preview", 130, function()
 		ns.Threat.preview(not ns.Threat.previewing)
-		self:SetText(ns.Threat.previewing and "End preview" or "Preview")
+		Panel.refresh()
 	end)
+	preview.refresh = function()
+		preview:SetText(ns.Threat.previewing and "End preview" or "Preview")
+	end
 	stack(page, preview, 0)
 	Panel.controls["preview"] = preview
 	local reset = button(page, "Reset", 130, function()
+		ns.Threat.preview(false)
 		ns.Options.reset("threat")
 		Panel.refresh()
 	end)
@@ -209,16 +268,10 @@ function Panel.statistics()
 	end
 	local since = s.since and date and date("%d %b %Y", s.since) or "-"
 	return {
-		{ "Recording", s.recording and "on" or "off" },
-		{ "Recording since", since },
-		{ "Time recorded", ns.Stats.duration(s.seconds) },
-		{ "Fights", string.format("%d (%d in the file)", s.fights, s.fights_kept) },
-		{ "Kills", tostring(s.kills) },
+		{ "Counting since", since },
+		{ "Time played", ns.Stats.duration(s.seconds) },
+		{ "Fights", tostring(s.fights) },
 		{ "Deaths", tostring(s.deaths) },
-		{ "Hits recorded", tostring(s.hits) },
-		{ "Creatures seen", tostring(s.creatures) },
-		{ "Loot windows", tostring(s.loot_windows) },
-		{ "Gear seen", tostring(s.gear_seen) },
 		{ "Gold looted", ns.Stats.money(s.money_looted) },
 		{ "Items looted", string.format("%d (%d kinds)%s", s.items_looted, s.items_looted_kinds, #qualities > 0 and ": " .. table.concat(qualities, ", ") or "") },
 		{ "Items sold", string.format("%d (%d kinds) for %s", s.items_sold, s.items_sold_kinds, ns.Stats.money(s.money_sold)) },
@@ -227,6 +280,8 @@ function Panel.statistics()
 end
 
 local function statisticsPage(page)
+	explain(page, "What you got while playing with the addon on: counted from your own purse, loot windows, bags and experience bar. It stays on your computer.", 40)
+	page.top = 40
 	page.lines = {}
 	page.refresh = function()
 		ns.Stats.tick()
@@ -234,8 +289,8 @@ local function statisticsPage(page)
 			local shown = page.lines[index]
 			if shown == nil then
 				shown = { label = text(page, "GameFontNormal"), value = text(page, "GameFontHighlight") }
-				shown.label:SetPoint("TOPLEFT", 0, -(index - 1) * 22)
-				shown.value:SetPoint("TOPLEFT", 170, -(index - 1) * 22)
+				shown.label:SetPoint("TOPLEFT", 0, -page.top - (index - 1) * 22)
+				shown.value:SetPoint("TOPLEFT", 170, -page.top - (index - 1) * 22)
 				shown.value:SetWidth(WIDTH - 210)
 				page.lines[index] = shown
 			end
@@ -245,15 +300,61 @@ local function statisticsPage(page)
 	end
 end
 
+local HELP = table.concat({
+	"/foreversim  export your character (the Character page)",
+	"/foreversim panel  this window",
+	"/foreversim threat on | off | auto  when the threat window shows",
+	"",
+	"What this addon keeps: your settings, your last exports and your statistics, in its own saved file on your computer. It sends nothing anywhere: the game does not let addons use the network.",
+	"",
+	"Threat comes from the game itself. Where the game withholds a number (another player's threat in some places), the window leaves it out rather than guess.",
+	"",
+	"Something wrong or missing? Use the feedback button on the site.",
+}, "\n")
+
+local function helpPage(page)
+	local words = stack(page, text(page, "GameFontHighlight", HELP), 300)
+	words:SetWidth(WIDTH - 60)
+	words:SetJustifyV("TOP")
+end
+
+-- ForeverSim Macros' page: only there when that addon is installed.
+local function macros()
+	local api = _G.ForeverSimMacros
+	return type(api) == "table" and api or nil
+end
+
+local function macrosPage(page)
+	explain(page, "ForeverSim Macros is installed: make macros by picking what they should do, with every part explained. Copy the result into the game's macro window (Game Menu, Macros).", 56)
+	Panel.controls["macros"] = stack(page, button(page, "Open the macro maker", 200, function()
+		local api = macros()
+		if api ~= nil then
+			api.open()
+		end
+	end), 34)
+	stack(page, button(page, "How macros work", 200, function()
+		local api = macros()
+		if api ~= nil then
+			api.open("guide")
+		end
+	end), 34)
+end
+
 local PAGES = {
-	{ key = "recording", title = "Recording", build = recordingPage },
+	{ key = "character", title = "Character", build = characterPage },
 	{ key = "threat", title = "Threat window", build = threatPage },
 	{ key = "statistics", title = "Statistics", build = statisticsPage },
+	{ key = "recording", title = "Recording", build = recordingPage, available = recorder },
+	{ key = "macros", title = "Macros", build = macrosPage, available = macros },
+	{ key = "help", title = "Help", build = helpPage },
 }
 
 -- --- The window ---------------------------------------------------------------------------------
 
 function Panel.select(key)
+	if key ~= "threat" then
+		ns.Threat.preview(false) -- the preview belongs to the threat page
+	end
 	for _, page in pairs(pages) do
 		page:Hide()
 	end
@@ -282,7 +383,7 @@ function Panel.refresh()
 end
 
 local function build()
-	frame = CreateFrame("Frame", "ForeverOptimizerPanel", UIParent, "BasicFrameTemplateWithInset")
+	frame = CreateFrame("Frame", "ForeverSimPanel", UIParent, "BasicFrameTemplateWithInset")
 	frame:SetSize(WIDTH, HEIGHT)
 	frame:SetPoint("CENTER")
 	frame:SetFrameStrata("DIALOG")
@@ -292,21 +393,30 @@ local function build()
 	frame:SetScript("OnDragStart", frame.StartMoving)
 	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 	tinsert(UISpecialFrames, frame:GetName()) -- Escape closes it
-	frame.title = text(frame, "GameFontHighlight", "Forever Optimizer")
+	frame.title = text(frame, "GameFontHighlight", "ForeverSim")
 	frame.title:SetPoint("TOP", 0, -6)
-	for index, spec in ipairs(PAGES) do
-		local tab = button(frame, spec.title, 140, function()
-			Panel.select(spec.key)
-		end)
-		tab:SetPoint("TOPLEFT", 12 + (index - 1) * 146, -30)
-		tabs[spec.key] = tab
-		local page = CreateFrame("Frame", nil, frame)
-		page:SetPoint("TOPLEFT", 20, -66)
-		page:SetPoint("BOTTOMRIGHT", -20, 16)
-		spec.build(page)
-		page:Hide()
-		pages[spec.key] = page
+	local placed = 0
+	for _, spec in ipairs(PAGES) do
+		if spec.available == nil or spec.available() then
+			placed = placed + 1
+			local tab = button(frame, spec.title, TAB_WIDTH, function()
+				Panel.select(spec.key)
+			end)
+			tab:SetPoint("TOPLEFT", 12 + (placed - 1) * (TAB_WIDTH + 4), -30)
+			tabs[spec.key] = tab
+			local page = CreateFrame("Frame", nil, frame)
+			page:SetPoint("TOPLEFT", 20, -66)
+			page:SetPoint("BOTTOMRIGHT", -20, 16)
+			spec.build(page)
+			page:Hide()
+			pages[spec.key] = page
+		end
 	end
+	-- Closing the panel ends the preview: the made-up rows never stay on screen.
+	frame:SetScript("OnHide", function()
+		ns.Threat.preview(false)
+		Panel.refresh()
+	end)
 	-- While open, the statistics keep up with what is happening.
 	local elapsed = 0
 	frame:SetScript("OnUpdate", function(_, delta)
@@ -316,7 +426,7 @@ local function build()
 			pages.statistics.refresh()
 		end
 	end)
-	Panel.select("recording")
+	Panel.select("character")
 end
 
 function Panel.show(key)
@@ -324,7 +434,7 @@ function Panel.show(key)
 		build()
 	end
 	frame:Show()
-	Panel.select(key or Panel.current or "recording")
+	Panel.select(key or Panel.current or "character")
 end
 
 function Panel.toggle()
@@ -343,13 +453,13 @@ function Panel.register()
 	end
 	return pcall(function()
 		local canvas = CreateFrame("Frame")
-		local about = text(canvas, "GameFontHighlight", "Recording, the threat window and what has been recorded so far.")
+		local about = text(canvas, "GameFontHighlight", "The character export, the threat window, your statistics and help.")
 		about:SetPoint("TOPLEFT", 16, -16)
 		local open = button(canvas, "Open the control panel", 200, function()
 			Panel.show()
 		end)
 		open:SetPoint("TOPLEFT", 16, -44)
-		local category = settings.RegisterCanvasLayoutCategory(canvas, "Forever Optimizer")
+		local category = settings.RegisterCanvasLayoutCategory(canvas, "ForeverSim")
 		settings.RegisterAddOnCategory(category)
 	end)
 end
