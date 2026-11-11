@@ -2,10 +2,11 @@
 ## Title: ForeverSim Macros
 ## IconTexture: Interface\AddOns\ForeverSimMacros\Logo.tga
 ## Notes: Make macros by picking what they should do, with every part explained for new players. Open it from its button or Options, AddOns.
-## Version: 0.1.0
+## Version: 0.1.1
 ## SavedVariables: ForeverSimMacrosDB
 
 Safe.lua
+Kit.lua
 Reference.lua
 Macro.lua
 Spells.lua

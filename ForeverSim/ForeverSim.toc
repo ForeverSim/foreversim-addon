@@ -2,10 +2,11 @@
 ## Title: ForeverSim
 ## IconTexture: Interface\AddOns\ForeverSim\Logo.tga
 ## Notes: Exports your character to the ForeverSim website, shows a tank who every enemy is on, and keeps your statistics. /foreversim
-## Version: 0.4.1
+## Version: 0.4.2
 ## SavedVariables: ForeverSimDB
 
 Safe.lua
+Kit.lua
 Json.lua
 ItemLink.lua
 Character.lua

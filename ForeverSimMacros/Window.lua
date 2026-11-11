@@ -1,130 +1,207 @@
--- The macro maker's window. Three pages:
---   * Make a macro: start from an example or from nothing, pick what each line does, and read
---     the macro, what is wrong with it and what it does, ready to copy;
+-- The macro maker's window, laid out with the shared Kit. Pages down the left:
+--   * Make a macro: five plain questions (what to cast, on whom, only when, a second spell with
+--     a key held, extras), each a numbered card, or an example to start from;
+--   * Advanced: every line of the macro by hand, for what the questions do not cover;
 --   * Getting started: what a macro is and how to put one on an action bar, for new players;
---   * Words explained: every command, condition and target the maker offers, in plain words.
--- The addon only writes text: the player copies it into the game's own macro window.
+--   * Words explained: every command, condition and target in plain words.
+-- On the first two, the macro is on the right as it is built: its text to copy, whether the game
+-- will take it, what it does, and the three steps to put it in the game. The addon only writes
+-- text: the player copies it into the game's own macro window.
 
 local _, ns = ...
+
+local Kit = ns.Kit
+local C = Kit.COLOURS
 
 local Window = {}
 ns.Window = Window
 
-local WIDTH, HEIGHT = 980, 600
-local LEFT, RIGHT = 210, 300
-local EDITOR = WIDTH - LEFT - RIGHT - 70
+local WIDTH, HEIGHT = 1000, 640
+local RESULT = 320
 
-local frame
-local pages, tabs = {}, {}
+local frame, result
+local pages = {}
 Window.current = nil
+Window.columns = {}
+Window.controls = {}
 
--- --- The macro being made ------------------------------------------------------------------------
-
-local function clause(argument, unit, conditions)
-	return { argument = argument or "", unit = unit or "", conditions = conditions or {} }
-end
-
-local function condition(name, values, negate)
-	return { name = name, values = values or {}, negate = negate or false }
-end
-
-local function line(command, clauses, reset)
-	return { command = command, clauses = clauses or { clause() }, reset = reset or {} }
-end
-
--- Examples to start from: what each does, and how to use it once it is on a button.
-Window.PRESETS = {
-	{
-		label = "Mouseover heal",
-		what = "Heals whoever your mouse is over, without changing your target. With nobody under the mouse, it heals your target.",
-		use = "Point at a player's portrait or character and press the button.",
-		macro = { showTooltip = true, lines = { line("cast", {
-			clause("Flash Heal", "mouseover", { condition("help"), condition("dead", nil, true) }),
-			clause("Flash Heal"),
-		}) } },
-	},
-	{
-		label = "Focus interrupt",
-		what = "Stops your own cast and interrupts your focus if you have one, else your target.",
-		use = "Make an enemy your focus (right-click its portrait, Set Focus), then press it when it casts.",
-		macro = { showTooltip = true, lines = {
-			line("stopcasting"),
-			line("cast", {
-				clause("Counterspell", "focus", { condition("harm"), condition("dead", nil, true) }),
-				clause("Counterspell"),
-			}),
-		} },
-	},
-	{
-		label = "Shift for another spell",
-		what = "One button, two spells: the second one while you hold Shift.",
-		use = "Press it for the first spell; hold Shift and press it for the second.",
-		macro = { showTooltip = true, lines = { line("cast", {
-			clause("Frost Nova", "", { condition("mod", { "shift" }) }),
-			clause("Frostbolt"),
-		}) } },
-	},
-	{
-		label = "Attack and cast",
-		what = "Starts your weapon attack along with a spell, so you never stand idle.",
-		use = "Target an enemy and press it.",
-		macro = { showTooltip = true, lines = { line("startattack"), line("cast", { clause("Heroic Strike") }) } },
-	},
-	{
-		label = "Spell at cursor",
-		what = "Drops a ground spell where your mouse cursor is, without the targeting circle.",
-		use = "Point at the ground and press it.",
-		macro = { showTooltip = true, lines = { line("cast", { clause("Blizzard", "cursor") }) } },
-	},
-	{
-		label = "Spell sequence",
-		what = "Casts spells one after another, one per press, and starts over on a new target or after combat.",
-		use = "Press it again and again; it moves on only when a spell is cast.",
-		macro = { showTooltip = true, lines = { line("castsequence", { clause("Rend, Heroic Strike, Heroic Strike") }, { "target", "combat" }) } },
-	},
-	{
-		label = "Empty",
-		what = "Start from nothing.",
-		use = "",
-		macro = { showTooltip = true, lines = { line("cast") } },
-	},
-}
-
-local function copy(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local result = {}
-	for key, item in pairs(value) do
-		result[key] = copy(item)
-	end
-	return result
-end
+-- --- Saved state ---------------------------------------------------------------------------------
 
 local function db()
 	ForeverSimMacrosDB = ForeverSimMacrosDB or {}
 	return ForeverSimMacrosDB
 end
 
+local function copy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local made = {}
+	for key, item in pairs(value) do
+		made[key] = copy(item)
+	end
+	return made
+end
+
+-- --- The questions -------------------------------------------------------------------------------
+
+Window.SIMPLE = {
+	spell = "",
+	who = "target",
+	only = "any",
+	skipDead = true,
+	alt = false,
+	altKey = "shift",
+	altSpell = "",
+	attack = false,
+	interrupt = false,
+	icon = true,
+}
+
+function Window.simple()
+	local store = db()
+	if type(store.simple) ~= "table" then
+		store.simple = copy(Window.SIMPLE)
+	end
+	for key, value in pairs(Window.SIMPLE) do
+		if store.simple[key] == nil then
+			store.simple[key] = value
+		end
+	end
+	return store.simple
+end
+
+-- Examples for the questions: what each does, and the answers it fills in.
+Window.EXAMPLES = {
+	{ label = "Mouseover heal", what = "Heals whoever your mouse is over, else your target.",
+		answers = { spell = "Flash Heal", who = "mouseover", only = "friend" } },
+	{ label = "Focus interrupt", what = "Stops your cast and interrupts your focus, else your target.",
+		answers = { spell = "Counterspell", who = "focus", only = "enemy", interrupt = true } },
+	{ label = "Shift for a second spell", what = "One button, two spells: the second with Shift held.",
+		answers = { spell = "Frostbolt", alt = true, altKey = "shift", altSpell = "Frost Nova" } },
+	{ label = "Attack and cast", what = "Starts your weapon attack along with a spell.",
+		answers = { spell = "Heroic Strike", only = "enemy", attack = true } },
+	{ label = "Spell at your cursor", what = "Drops a ground spell where your cursor is.",
+		answers = { spell = "Blizzard", who = "cursor" } },
+	{ label = "Heal yourself", what = "Always heals you, whoever you have targeted.",
+		answers = { spell = "Flash Heal", who = "player" } },
+}
+
+function Window.useExample(index)
+	local example = Window.EXAMPLES[index]
+	if example == nil then
+		return
+	end
+	local answers = copy(Window.SIMPLE)
+	for key, value in pairs(example.answers) do
+		answers[key] = value
+	end
+	db().simple = answers
+	Window.refresh()
+end
+
+local WHO = {
+	{ value = "target", label = "Your target", about = "Whoever you have targeted." },
+	{ value = "mouseover", label = "Whoever your mouse is over, else your target", about = "Point at a player's portrait or at a character to cast on them without changing your target. With nobody under the mouse, it goes to your target." },
+	{ value = "focus", label = "Your focus, else your target", about = "Your focus is a second target you keep: right-click a portrait and choose Set Focus. Without one, it goes to your target." },
+	{ value = "player", label = "Yourself", about = "Always you, whoever you have targeted." },
+	{ value = "cursor", label = "The ground under your cursor", about = "For spells cast on the ground: they land where your mouse points, with no targeting circle." },
+}
+
+local ONLY = {
+	{ value = "any", label = "Always", about = "Whoever it is." },
+	{ value = "enemy", label = "Only on an enemy", about = "Nothing happens on a friend; with Your focus or Your mouse, it falls back to your target instead." },
+	{ value = "friend", label = "Only on a friend", about = "Nothing happens on an enemy; with Your focus or Your mouse, it falls back to your target instead." },
+}
+
+local function condition(name, values, negate)
+	return { name = name, values = values or {}, negate = negate or false }
+end
+
+local function clause(argument, unit, conditions)
+	return { argument = argument or "", unit = unit or "", conditions = conditions or {} }
+end
+
+local function line(command, clauses, reset)
+	return { command = command, clauses = clauses or { clause() }, reset = reset or {} }
+end
+
+-- The macro the answers make, in the form Macro.build reads.
+function Window.fromAnswers(s)
+	local lines = {}
+	if s.interrupt then
+		lines[#lines + 1] = line("stopcasting")
+	end
+	if s.attack then
+		lines[#lines + 1] = line("startattack")
+	end
+	local function checks(extra)
+		local list = {}
+		if extra then
+			list[#list + 1] = extra
+		end
+		if s.only == "enemy" then
+			list[#list + 1] = condition("harm")
+		elseif s.only == "friend" then
+			list[#list + 1] = condition("help")
+		end
+		if s.skipDead and s.who ~= "player" and s.who ~= "cursor" then
+			list[#list + 1] = condition("dead", nil, true)
+		end
+		return list
+	end
+	local unit = s.who == "target" and "" or s.who
+	local clauses = {}
+	if s.alt and s.altSpell ~= "" then
+		clauses[#clauses + 1] = clause(s.altSpell, unit, checks(condition("mod", { s.altKey })))
+	end
+	if s.who == "mouseover" or s.who == "focus" then
+		local first = checks()
+		if #first == 0 then
+			first[1] = condition("exists")
+		end
+		clauses[#clauses + 1] = clause(s.spell, unit, first)
+		clauses[#clauses + 1] = clause(s.spell, "", checks())
+	else
+		clauses[#clauses + 1] = clause(s.spell, unit, checks())
+	end
+	lines[#lines + 1] = line("cast", clauses)
+	return { showTooltip = s.icon, lines = lines }
+end
+
+-- --- The advanced editor's macro -----------------------------------------------------------------
+
+-- Examples for the editor, including what the questions cannot make.
+Window.PRESETS = {
+	{ label = "Spell sequence", macro = { showTooltip = true, lines = { line("castsequence", { clause("Rend, Heroic Strike, Heroic Strike") }, { "target", "combat" }) } } },
+	{ label = "Assist the tank", macro = { showTooltip = false, lines = { line("assist", { clause("", "focus") }), line("startattack") } } },
+	{ label = "Pet attack", macro = { showTooltip = false, lines = { line("petattack"), line("cast", { clause("Arcane Shot") }) } } },
+	{ label = "Empty", macro = { showTooltip = true, lines = { line("cast") } } },
+}
+
 function Window.macro()
 	local store = db()
 	if type(store.draft) ~= "table" then
-		store.draft = copy(Window.PRESETS[1].macro)
+		store.draft = copy(Window.PRESETS[#Window.PRESETS].macro)
 	end
 	return store.draft
 end
 
 function Window.usePreset(index)
 	local preset = Window.PRESETS[index]
-	if preset == nil then
-		return
+	if preset ~= nil then
+		db().draft = copy(preset.macro)
+		Window.refresh()
 	end
-	db().draft = copy(preset.macro)
-	Window.chosenPreset = index
-	Window.render()
 end
 
--- --- Lookups -------------------------------------------------------------------------------------
+-- Take what the questions made into the editor, to change it by hand.
+function Window.editAnswers()
+	db().draft = Window.fromAnswers(Window.simple())
+	Window.select("advanced")
+end
+
+-- --- Lists to pick from --------------------------------------------------------------------------
 
 local function commands()
 	local found = {}
@@ -144,10 +221,6 @@ end
 
 local function unitEntries()
 	local entries = { { value = "", label = "Your target", about = "the default: whatever you have targeted" } }
-	local extra = {
-		{ token = "targettarget", summary = "the target of your target" },
-		{ token = "focustarget", summary = "the target of your focus" },
-	}
 	for _, unit in ipairs(ns.Reference.units) do
 		if unit.range then
 			for number = unit.range[1], math.min(unit.range[2], unit.range[1] + 4) do
@@ -157,16 +230,15 @@ local function unitEntries()
 			entries[#entries + 1] = { value = unit.token, label = "@" .. unit.token, about = unit.summary }
 		end
 	end
-	for _, unit in ipairs(extra) do
-		entries[#entries + 1] = { value = unit.token, label = "@" .. unit.token, about = unit.summary }
-	end
+	entries[#entries + 1] = { value = "targettarget", label = "@targettarget", about = "the target of your target" }
+	entries[#entries + 1] = { value = "focustarget", label = "@focustarget", about = "the target of your focus" }
 	return entries
 end
 
 local function unitLabel(value)
 	for _, entry in ipairs(unitEntries()) do
 		if entry.value == value then
-			return entry.label .. "  (" .. entry.about .. ")"
+			return entry.label
 		end
 	end
 	return "@" .. value
@@ -199,7 +271,247 @@ local function spellEntries()
 	return entries
 end
 
--- --- Widgets, reused on every redraw -------------------------------------------------------------
+-- --- The macro, on the right ---------------------------------------------------------------------
+
+local NEXT_STEPS = table.concat({
+	"1. Click Select to copy, then press Ctrl+C (Cmd+C on a Mac).",
+	"2. In the game: Escape, Macros, New. Pick the question mark icon, name it, click Okay.",
+	"3. Click in the big box, press Ctrl+V, close the window.",
+	"4. Drag the macro's icon onto an action bar and press it like a spell.",
+}, "\n")
+
+local function buildResult(parent)
+	result = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+	result:SetPoint("TOPRIGHT", 0, 0)
+	result:SetPoint("BOTTOMRIGHT", 0, 0)
+	result:SetWidth(RESULT)
+	Kit.backdrop(result, C.panel)
+	result.title = Kit.text(result, "GameFontNormalLarge", C.accent)
+	result.title:SetText("Your macro")
+	result.box = CreateFrame("Frame", nil, result, "BackdropTemplate")
+	result.box:SetSize(RESULT - 24, 118)
+	Kit.backdrop(result.box, { 0, 0, 0, 0.55 })
+	result.text = CreateFrame("EditBox", nil, result.box)
+	result.text:SetPoint("TOPLEFT", 8, -8)
+	result.text:SetPoint("BOTTOMRIGHT", -8, 8)
+	result.text:SetMultiLine(true)
+	result.text:SetAutoFocus(false)
+	result.text:SetFontObject(ChatFontNormal)
+	-- Read-only: a typed change puts the macro back, so what is copied is what was checked.
+	result.text:SetScript("OnTextChanged", function(self, userInput)
+		if userInput and Window.built then
+			self:SetText(Window.built.text)
+			self:HighlightText()
+		end
+	end)
+	result.text:SetScript("OnEscapePressed", function(self)
+		self:ClearFocus()
+	end)
+	result.count = Kit.text(result, "GameFontHighlightSmall", C.muted)
+	result.select = Kit.button(result, "Select to copy", 140, function()
+		result.text:SetFocus()
+		result.text:HighlightText()
+		result.status:SetText("Selected: press Ctrl+C (Cmd+C on a Mac).")
+	end, "primary")
+	result.status = Kit.text(result, "GameFontHighlight", C.text)
+	result.whatTitle = Kit.text(result, "GameFontNormal", C.accent)
+	result.whatTitle:SetText("What it does")
+	result.explain = Kit.text(result, "GameFontHighlight", C.muted)
+	result.nextTitle = Kit.text(result, "GameFontNormal", C.accent)
+	result.nextTitle:SetText("Then put it in the game")
+	result.next = Kit.text(result, "GameFontHighlight", C.muted)
+	result.next:SetText(NEXT_STEPS)
+end
+
+-- Lay the result out again: its texts change length as the macro does.
+local function layoutResult()
+	local column = Kit.column(result, RESULT - 24, 12, -12)
+	column:place(result.title, 20)
+	column:place(result.box, 118)
+	column:row({ { result.count, 140 }, { result.select, 140 } }, 26)
+	result.status:SetWidth(column.width)
+	column:place(result.status, math.max(result.status:GetStringHeight() or 14, 14))
+	column:place(result.whatTitle, 16)
+	result.explain:SetWidth(column.width)
+	column:place(result.explain, math.max(result.explain:GetStringHeight() or 14, 14))
+	column:place(result.nextTitle, 16)
+	result.next:SetWidth(column.width)
+	column:place(result.next, math.max(result.next:GetStringHeight() or 14, 14))
+	Window.columns.result = column
+end
+
+local function showResult()
+	if result == nil then
+		return
+	end
+	local macro = Window.current == "advanced" and Window.macro() or Window.fromAnswers(Window.simple())
+	local built = ns.Macro.build(copy(macro))
+	Window.built = built
+	result.text:SetText(built.text)
+	local over = built.length > built.maxLength
+	result.count:SetText(string.format("%d / %d characters", built.length, built.maxLength))
+	result.count:SetTextColor(unpack(over and C.bad or C.muted))
+	local said = {}
+	for _, item in ipairs(built.problems) do
+		if item.severity == "error" then
+			said[#said + 1] = "|cffff5a52" .. item.message .. "|r"
+		end
+	end
+	for _, item in ipairs(built.problems) do
+		if item.severity == "warning" then
+			said[#said + 1] = "|cffffcc40" .. item.message .. "|r"
+		end
+	end
+	result.status:SetText(#said > 0 and table.concat(said, "\n") or "|cff66d980The game will take it. Ready to copy.|r")
+	local steps = {}
+	for index, words in ipairs(built.explanation) do
+		steps[#steps + 1] = index .. ". " .. words
+	end
+	result.explain:SetText(table.concat(steps, "\n"))
+	layoutResult()
+end
+Window.showResult = showResult
+
+-- --- Make a macro: the questions -----------------------------------------------------------------
+
+local function spellRow(column, get, set, label)
+	column:subheading(label)
+	column.y = column.y + Kit.SPACE - Kit.SMALL_SPACE
+	local box = CreateFrame("EditBox", nil, column.parent, "BackdropTemplate")
+	box:SetSize(column.width - 130, 26)
+	box:SetAutoFocus(false)
+	box:SetFontObject(ChatFontNormal)
+	box:SetTextInsets(8, 8, 0, 0)
+	Kit.backdrop(box, { 0, 0, 0, 0.45 })
+	box:SetScript("OnEscapePressed", function(self)
+		self:ClearFocus()
+	end)
+	box:SetScript("OnEnterPressed", function(self)
+		self:ClearFocus()
+	end)
+	box:SetScript("OnTextChanged", function(self, userInput)
+		if userInput then
+			set(self:GetText())
+			showResult()
+		end
+	end)
+	box.refresh = function()
+		if box:GetText() ~= get() then
+			box:SetText(get())
+		end
+	end
+	local pick = Kit.button(column.parent, "Your spells", 120, function(self)
+		ns.Picker.open(self, spellEntries(), function(value)
+			if value ~= nil then
+				set(value)
+				box:SetText(value)
+				showResult()
+			end
+		end)
+	end, "quiet")
+	column:row({ { box, column.width - 130 }, { pick, 120 } }, 26)
+	box.refresh()
+	return box, pick
+end
+
+local function simplePage(column)
+	local answers = Window.simple
+	local function setter(key)
+		return function(value)
+			answers()[key] = value
+			showResult()
+		end
+	end
+	local function getter(key)
+		return function()
+			return answers()[key]
+		end
+	end
+	local controls = {}
+	Window.controls.simple = controls
+
+	column:heading("Make a macro")
+	column:paragraph("Answer the questions below. The macro on the right follows as you go, with what it does in plain words. New to macros? Read Getting started first.")
+	column:subheading("Start from an example")
+	controls.examples = {}
+	local row = {}
+	for index, example in ipairs(Window.EXAMPLES) do
+		local pick = Kit.button(column.parent, example.label, math.floor((column.width - 16) / 3), function()
+			Window.useExample(index)
+		end, "quiet")
+		pick:SetScript("OnEnter", function(self)
+			self.hover = true
+			self:paint()
+			if GameTooltip then
+				GameTooltip:SetOwner(self, "ANCHOR_TOP")
+				GameTooltip:AddLine(example.label)
+				GameTooltip:AddLine(example.what, 1, 1, 1, true)
+				GameTooltip:Show()
+			end
+		end)
+		pick:SetScript("OnLeave", function(self)
+			self.hover = false
+			self:paint()
+			if GameTooltip then
+				GameTooltip:Hide()
+			end
+		end)
+		controls.examples[index] = pick
+		row[#row + 1] = { pick, math.floor((column.width - 16) / 3) }
+		if #row == 3 or index == #Window.EXAMPLES then
+			column:row(row, 26)
+			column.y = column.y + Kit.SPACE - Kit.SMALL_SPACE
+			row = {}
+		end
+	end
+	column:gap(Kit.SPACE)
+
+	local card = column:card()
+	local inner = card.column
+	inner:heading("1. What should the button cast?")
+	controls.spell = spellRow(inner, getter("spell"), setter("spell"), "The spell (or item)")
+	inner:paragraph("Type its name as the game writes it, or pick it from your spellbook.")
+	column:after(card)
+
+	card = column:card()
+	inner = card.column
+	inner:heading("2. On whom?")
+	controls.who = inner:radio(WHO, getter("who"), setter("who"))
+	column:after(card)
+
+	card = column:card()
+	inner = card.column
+	inner:heading("3. Only when...")
+	controls.only = inner:radio(ONLY, getter("only"), setter("only"))
+	controls.skipDead = inner:check("Skip dead targets", "Then it never tries to cast on a corpse.", getter("skipDead"), setter("skipDead"))
+	column:after(card)
+
+	card = column:card()
+	inner = card.column
+	inner:heading("4. A second spell with a key held (optional)")
+	controls.alt = inner:check("Cast another spell while I hold a key", nil, getter("alt"), setter("alt"))
+	controls.altKey = inner:choice("The key", nil, {
+		{ value = "shift", label = "Shift", width = 100 },
+		{ value = "ctrl", label = "Ctrl", width = 100 },
+		{ value = "alt", label = "Alt", width = 100 },
+	}, getter("altKey"), setter("altKey"))
+	controls.altSpell = spellRow(inner, getter("altSpell"), setter("altSpell"), "The other spell")
+	column:after(card)
+
+	card = column:card()
+	inner = card.column
+	inner:heading("5. Extras")
+	controls.attack = inner:check("Start my weapon attack too", "Useful for melee: you never stand idle between spells.", getter("attack"), setter("attack"))
+	controls.interrupt = inner:check("Stop the spell I am casting first", "For interrupts: it cuts your own cast short so this one goes off at once.", getter("interrupt"), setter("interrupt"))
+	controls.icon = inner:check("Show the spell's icon on the button", "The button then looks like the spell it will cast, with its cooldown.", getter("icon"), setter("icon"))
+	column:after(card)
+
+	column:button("Change it line by line (Advanced)", function()
+		Window.editAnswers()
+	end, 260, "quiet")
+end
+
+-- --- Advanced: the lines by hand -----------------------------------------------------------------
 
 local pools, used = {}, {}
 
@@ -225,39 +537,40 @@ local function releaseAll()
 	end
 end
 
-local function label(parent, text, x, y, width, font)
-	local made = acquire(font or "label", parent, function(owner)
-		local words = owner:CreateFontString(nil, "OVERLAY", font or "GameFontHighlightSmall")
-		words:SetJustifyH("LEFT")
-		words:SetJustifyV("TOP")
-		return words
+local function words(column, text, font, colour, indent)
+	local width = column.width - (indent or 0)
+	local made = acquire(font .. "/" .. tostring(colour), column.parent, function(owner)
+		return Kit.text(owner, font, colour)
 	end)
-	made:SetPoint("TOPLEFT", x, y)
-	made:SetWidth(width or EDITOR)
 	made:SetText(text)
+	made:SetWidth(width)
+	column:place(made, math.max(made:GetStringHeight() or 14, 14), indent, width)
 	return made
 end
 
-local function button(parent, text, x, y, width, onClick)
-	local made = acquire("button", parent, function(owner)
-		return CreateFrame("Button", nil, owner, "UIPanelButtonTemplate")
+local function flat(column, label, width, onClick, kind)
+	local made = acquire("button/" .. tostring(kind), column.parent, function(owner)
+		return Kit.button(owner, "", width, nil, kind)
 	end)
-	made:SetPoint("TOPLEFT", x, y)
-	made:SetSize(width, 22)
-	made:SetText(text)
+	made:SetSize(width, 26)
+	made:SetText(label)
 	made:SetScript("OnClick", onClick)
 	return made
 end
 
-local function edit(parent, text, x, y, width, onChange)
-	local made = acquire("edit", parent, function(owner)
-		local box = CreateFrame("EditBox", nil, owner, "InputBoxTemplate")
+local function field(column, text, width, onChange)
+	local made = acquire("edit", column.parent, function(owner)
+		local box = CreateFrame("EditBox", nil, owner, "BackdropTemplate")
 		box:SetAutoFocus(false)
-		box:SetHeight(22)
+		box:SetFontObject(ChatFontNormal)
+		box:SetTextInsets(8, 8, 0, 0)
+		Kit.backdrop(box, { 0, 0, 0, 0.45 })
+		box:SetScript("OnEscapePressed", function(self)
+			self:ClearFocus()
+		end)
 		return box
 	end)
-	made:SetPoint("TOPLEFT", x + 6, y)
-	made:SetWidth(width)
+	made:SetSize(width, 26)
 	made:SetScript("OnTextChanged", nil)
 	made:SetText(text or "")
 	made:SetScript("OnTextChanged", function(self, userInput)
@@ -268,20 +581,17 @@ local function edit(parent, text, x, y, width, onChange)
 	return made
 end
 
-local function check(parent, checked, x, y, onClick)
-	local made = acquire("check", parent, function(owner)
+local function tick(column, checked, onClick)
+	local made = acquire("check", column.parent, function(owner)
 		return CreateFrame("CheckButton", nil, owner, "UICheckButtonTemplate")
 	end)
-	made:SetPoint("TOPLEFT", x, y + 2)
-	made:SetSize(22, 22)
+	made:SetSize(24, 24)
 	made:SetChecked(checked)
 	made:SetScript("OnClick", function(self)
 		onClick(self:GetChecked() and true or false)
 	end)
 	return made
 end
-
--- --- The result ----------------------------------------------------------------------------------
 
 local function splitList(text)
 	local values = {}
@@ -294,133 +604,135 @@ local function splitList(text)
 	return values
 end
 
-local function showResult()
-	if frame == nil then
+local function renderAdvanced()
+	local page = pages.advanced
+	if page == nil then
 		return
 	end
-	local built = ns.Macro.build(copy(Window.macro()))
-	Window.built = built
-	local result = pages.make.result
-	result.text:SetText(built.text)
-	local over = built.length > built.maxLength
-	result.count:SetText(string.format("%d / %d characters", built.length, built.maxLength))
-	result.count:SetTextColor(over and 1 or 0.7, over and 0.25 or 0.7, over and 0.25 or 0.7)
-	local errors, warnings = {}, {}
-	for _, item in ipairs(built.problems) do
-		if item.severity == "error" then
-			errors[#errors + 1] = "|cffff5050" .. item.message .. "|r"
-		else
-			warnings[#warnings + 1] = "|cffffd040" .. item.message .. "|r"
-		end
-	end
-	local said = {}
-	for _, item in ipairs(errors) do
-		said[#said + 1] = item
-	end
-	for _, item in ipairs(warnings) do
-		said[#said + 1] = item
-	end
-	result.problems:SetText(#said > 0 and table.concat(said, "\n") or "|cff60d070Ready to copy.|r")
-	local steps = {}
-	for index, words in ipairs(built.explanation) do
-		steps[#steps + 1] = index .. ". " .. words
-	end
-	result.explain:SetText(table.concat(steps, "\n"))
-end
-
--- --- The editor ----------------------------------------------------------------------------------
-
-local function renderEditor()
-	local page = pages.make
-	local content = page.content
 	releaseAll()
+	local column = Kit.column(page.content, page.column.width)
+	Window.columns.advanced = column
 	local macro = Window.macro()
 	local known, knownConditions = commands(), conditions()
-	local y = 0
-	local tooltip = check(content, macro.showTooltip, 0, y, function(on)
+	local controls = { lines = {} }
+	Window.controls.advanced = controls
+
+	words(column, "Advanced", "GameFontNormalLarge", C.accent)
+	words(column, "Every line of the macro by hand. Each line is a command; a command that takes conditions can try several things in order: the first whose conditions are true is done.", "GameFontHighlight", C.muted)
+	-- The examples, two to a line, as wide as the page allows.
+	local half = math.floor((column.width - 8) / 2)
+	local row = {}
+	for index, preset in ipairs(Window.PRESETS) do
+		row[#row + 1] = { flat(column, preset.label, half, function()
+			Window.usePreset(index)
+		end, "quiet"), half }
+		if #row == 2 or index == #Window.PRESETS then
+			column:row(row, 26)
+			column.y = column.y + Kit.SPACE - Kit.SMALL_SPACE
+			row = {}
+		end
+	end
+	column:gap(Kit.SMALL_SPACE)
+	local iconWords = acquire("GameFontHighlight/icon", column.parent, function(owner)
+		return Kit.text(owner, "GameFontHighlight", C.text)
+	end)
+	iconWords:SetText("Show the spell's icon on the button (#showtooltip)")
+	column:row({ { tick(column, macro.showTooltip, function(on)
 		macro.showTooltip = on
 		showResult()
-	end)
-	Window.controls.tooltip = tooltip
-	label(content, "Show the spell's icon and tooltip on the button (#showtooltip)", 26, y - 4)
-	y = y - 30
-	Window.controls.lines = {}
+	end), 24 }, { iconWords, column.width - 32 } }, 24)
+
 	for li, entry in ipairs(macro.lines) do
 		local command = known[entry.command]
-		local controls = { parts = {} }
-		Window.controls.lines[li] = controls
-		label(content, "Line " .. li, 0, y - 4, 50, "GameFontNormal")
-		controls.command = button(content, "/" .. entry.command, 56, y, 220, function(self)
+		local lineControls = { parts = {} }
+		controls.lines[li] = lineControls
+		column:gap(Kit.SMALL_SPACE)
+		lineControls.command = flat(column, "/" .. entry.command, 200, function(self)
 			ns.Picker.open(self, commandEntries(), function(value)
 				entry.command = value
-				Window.render()
+				Window.refresh()
 			end)
 		end)
-		button(content, "Remove line", 284, y, 100, function()
+		local remove = flat(column, "Remove line", 120, function()
 			if #macro.lines > 1 then
 				table.remove(macro.lines, li)
-				Window.render()
+				Window.refresh()
 			end
+		end, "quiet")
+		local number = acquire("GameFontNormalLarge/number", column.parent, function(owner)
+			return Kit.text(owner, "GameFontNormalLarge", C.accent)
 		end)
-		y = y - 26
+		number:SetText("Line " .. li)
+		column:row({ { number, 70 }, { lineControls.command, 200 }, { remove, 120 } }, 26)
 		if command then
-			label(content, command.summary, 0, y, EDITOR)
-			y = y - 30
+			words(column, command.summary, "GameFontHighlight", C.muted)
 		end
 		for ci, part in ipairs(entry.clauses) do
 			local partControls = { conditions = {} }
-			controls.parts[ci] = partControls
-			label(content, ci == 1 and "If" or "Otherwise, if", 10, y, 120, "GameFontNormal")
-			y = y - 18
+			lineControls.parts[ci] = partControls
+			words(column, ci == 1 and "If" or "Otherwise, if", "GameFontNormal", C.text, 16)
 			if command == nil or command.conditions then
-				label(content, "On", 10, y - 4, 30)
-				partControls.unit = button(content, part.unit == "" and "Your target (the default)" or unitLabel(part.unit), 40, y, 340, function(self)
+				local on = acquire("GameFontHighlight/on", column.parent, function(owner)
+					return Kit.text(owner, "GameFontHighlight", C.muted)
+				end)
+				on:SetText("On")
+				partControls.unit = flat(column, part.unit == "" and "Your target (the default)" or unitLabel(part.unit), 260, function(self)
 					ns.Picker.open(self, unitEntries(), function(value)
 						part.unit = value or ""
-						Window.render()
+						Window.refresh()
 					end)
-				end)
-				y = y - 26
+				end, "quiet")
+				column.x = column.x + 16
+				column:row({ { on, 30 }, { partControls.unit, 260 } }, 26)
 				for ki, one in ipairs(part.conditions) do
 					local about = knownConditions[one.name]
-					check(content, one.negate, 10, y, function(on)
-						one.negate = on
+					local items = { { tick(column, one.negate, function(checked)
+						one.negate = checked
 						showResult()
+					end), 24 } }
+					local notWord = acquire("GameFontHighlight/not", column.parent, function(owner)
+						return Kit.text(owner, "GameFontHighlight", C.muted)
 					end)
-					label(content, "not", 34, y - 4, 24)
-					partControls.conditions[ki] = button(content, about and about.summary or one.name, 60, y, 230, function(self)
+					notWord:SetText("not")
+					items[#items + 1] = { notWord, 26 }
+					-- What is left of the line once the box, "not", the value and the x have theirs.
+					local wide = column.width - 16 - 24 - 26 - 80 - 26 - 4 * 8
+					partControls.conditions[ki] = flat(column, about and about.summary or one.name, wide, function(self)
 						ns.Picker.open(self, conditionEntries(), function(value)
 							part.conditions[ki] = condition(value)
-							Window.render()
+							Window.refresh()
 						end)
-					end)
+					end, "quiet")
+					items[#items + 1] = { partControls.conditions[ki], wide }
 					if about and about.argument ~= "none" then
-						edit(content, table.concat(one.values or {}, "/"), 296, y, 80, function(text)
+						items[#items + 1] = { field(column, table.concat(one.values or {}, "/"), 80, function(text)
 							one.values = splitList(text)
 							showResult()
-						end)
+						end), 80 }
 					end
-					button(content, "x", 384, y, 24, function()
+					items[#items + 1] = { flat(column, "x", 26, function()
 						table.remove(part.conditions, ki)
-						Window.render()
-					end)
-					y = y - 26
+						Window.refresh()
+					end, "quiet"), 26 }
+					column:row(items, 26)
 				end
-				partControls.addCondition = button(content, "+ Condition", 10, y, 110, function()
+				partControls.addCondition = flat(column, "+ Condition", 120, function()
 					part.conditions[#part.conditions + 1] = condition(ns.Reference.conditions[1].name)
-					Window.render()
-				end)
-				y = y - 28
+					Window.refresh()
+				end, "quiet")
+				column:row({ { partControls.addCondition, 120 } }, 26)
+				column.x = column.x - 16
 			end
 			if command and command.argument ~= "none" then
-				local words = (command.argument == "sequence" or command.argument == "list") and "Spells, separated by commas" or command.argument == "text" and "Text" or "Spell or item"
-				label(content, words, 10, y)
-				partControls.argument = edit(content, part.argument, 10, y - 14, 250, function(text)
+				local label = (command.argument == "sequence" or command.argument == "list") and "Spells, separated by commas" or command.argument == "text" and "Text" or "Spell or item"
+				words(column, label, "GameFontHighlight", C.muted, 16)
+				partControls.argument = field(column, part.argument, 250, function(text)
 					part.argument = text
 					showResult()
 				end)
+				local items = { { partControls.argument, 250 } }
 				if command.argument ~= "text" then
-					button(content, "Your spells", 272, y - 14, 108, function(self)
+					items[#items + 1] = { flat(column, "Your spells", 110, function(self)
 						ns.Picker.open(self, spellEntries(), function(value)
 							if value ~= nil then
 								if command.argument == "sequence" or command.argument == "list" then
@@ -428,290 +740,206 @@ local function renderEditor()
 								else
 									part.argument = value
 								end
-								Window.render()
+								Window.refresh()
 							end
 						end)
-					end)
+					end, "quiet"), 110 }
 				end
-				y = y - 42
+				column.x = column.x + 16
+				column:row(items, 26)
+				column.x = column.x - 16
 			end
 			if ci > 1 then
-				button(content, "Remove this part", 10, y, 140, function()
+				column.x = column.x + 16
+				column:row({ { flat(column, "Remove this part", 150, function()
 					table.remove(entry.clauses, ci)
-					Window.render()
-				end)
-				y = y - 26
+					Window.refresh()
+				end, "quiet"), 150 } }, 26)
+				column.x = column.x - 16
 			end
 		end
 		if entry.command == "castsequence" then
-			label(content, "Start over after (seconds, or " .. table.concat(ns.Reference.castsequence_resets, ", ") .. "; several with /)", 10, y)
-			edit(content, table.concat(entry.reset or {}, "/"), 10, y - 14, 250, function(text)
+			words(column, "Start over after (seconds, or " .. table.concat(ns.Reference.castsequence_resets, ", ") .. "; several with /)", "GameFontHighlight", C.muted, 16)
+			column.x = column.x + 16
+			column:row({ { field(column, table.concat(entry.reset or {}, "/"), 250, function(text)
 				entry.reset = splitList(text)
 				showResult()
-			end)
-			y = y - 42
+			end), 250 } }, 26)
+			column.x = column.x - 16
 		end
 		if command and command.conditions then
-			controls.otherwise = button(content, "+ Otherwise...", 0, y, 120, function()
+			lineControls.otherwise = flat(column, "+ Otherwise...", 140, function()
 				entry.clauses[#entry.clauses + 1] = clause()
-				Window.render()
-			end)
-			y = y - 30
+				Window.refresh()
+			end, "quiet")
+			column:row({ { lineControls.otherwise, 140 } }, 26)
 		end
-		y = y - 10
-	end
-	Window.controls.addLine = button(content, "+ Add a line", 0, y, 140, function()
-		macro.lines[#macro.lines + 1] = line("cast")
-		Window.render()
-	end)
-	y = y - 30
-	content:SetHeight(-y)
-end
-
--- --- Pages ---------------------------------------------------------------------------------------
-
-local function makePage(page)
-	-- Examples, on the left.
-	local intro = page:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	intro:SetPoint("TOPLEFT", 0, 0)
-	intro:SetText("Start from")
-	page.presets = {}
-	for index, preset in ipairs(Window.PRESETS) do
-		local pick = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
-		pick:SetSize(LEFT - 10, 22)
-		pick:SetPoint("TOPLEFT", 0, -18 - (index - 1) * 26)
-		pick:SetText(preset.label)
-		pick:SetScript("OnClick", function()
-			Window.usePreset(index)
+		local rule = acquire("rule", column.parent, function(owner)
+			local texture = owner:CreateTexture(nil, "ARTWORK")
+			texture:SetColorTexture(unpack(C.line))
+			return texture
 		end)
-		page.presets[index] = pick
+		rule:SetSize(column.width, 1)
+		column:place(rule, 1)
 	end
-	page.about = page:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	page.about:SetPoint("TOPLEFT", 0, -26 - #Window.PRESETS * 26)
-	page.about:SetWidth(LEFT - 10)
-	page.about:SetJustifyH("LEFT")
-	page.about:SetJustifyV("TOP")
-
-	-- The editor, in the middle, scrolling.
-	page.scroll = CreateFrame("ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
-	page.scroll:SetPoint("TOPLEFT", LEFT + 10, 0)
-	page.scroll:SetPoint("BOTTOMLEFT", LEFT + 10, 0)
-	page.scroll:SetWidth(EDITOR + 10)
-	page.content = CreateFrame("Frame", nil, page.scroll)
-	page.content:SetSize(EDITOR, 400)
-	page.scroll:SetScrollChild(page.content)
-
-	-- The macro, on the right.
-	local result = CreateFrame("Frame", nil, page)
-	result:SetPoint("TOPRIGHT", 0, 0)
-	result:SetPoint("BOTTOMRIGHT", 0, 0)
-	result:SetWidth(RIGHT)
-	page.result = result
-	result.title = result:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	result.title:SetPoint("TOPLEFT", 0, 0)
-	result.title:SetText("Your macro")
-	result.box = CreateFrame("Frame", nil, result, "BackdropTemplate")
-	result.box:SetPoint("TOPLEFT", 0, -18)
-	result.box:SetSize(RIGHT, 110)
-	if result.box.SetBackdrop then
-		result.box:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-		result.box:SetBackdropColor(0, 0, 0, 0.5)
-		result.box:SetBackdropBorderColor(1, 1, 1, 0.25)
-	end
-	result.text = CreateFrame("EditBox", nil, result.box)
-	result.text:SetPoint("TOPLEFT", 6, -6)
-	result.text:SetPoint("BOTTOMRIGHT", -6, 6)
-	result.text:SetMultiLine(true)
-	result.text:SetAutoFocus(false)
-	result.text:SetFontObject(ChatFontNormal)
-	-- Read-only: a typed change puts the macro back, so what is copied is what was checked.
-	result.text:SetScript("OnTextChanged", function(self, userInput)
-		if userInput and Window.built then
-			self:SetText(Window.built.text)
-			self:HighlightText()
-		end
-	end)
-	result.text:SetScript("OnEscapePressed", function(self)
-		self:ClearFocus()
-	end)
-	result.count = result:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	result.count:SetPoint("TOPLEFT", result.box, "BOTTOMLEFT", 0, -6)
-	result.select = CreateFrame("Button", nil, result, "UIPanelButtonTemplate")
-	result.select:SetSize(130, 22)
-	result.select:SetPoint("TOPRIGHT", result.box, "BOTTOMRIGHT", 0, -2)
-	result.select:SetText("Select to copy")
-	result.select:SetScript("OnClick", function()
-		result.text:SetFocus()
-		result.text:HighlightText()
-		result.hint:SetText("Selected: press Ctrl+C to copy (Cmd+C on a Mac).")
-	end)
-	result.hint = result:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	result.hint:SetPoint("TOPLEFT", result.box, "BOTTOMLEFT", 0, -28)
-	result.hint:SetWidth(RIGHT)
-	result.hint:SetJustifyH("LEFT")
-	result.hint:SetText("Then put it in the game's macro window: see Getting started.")
-	result.problems = result:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	result.problems:SetPoint("TOPLEFT", result.hint, "BOTTOMLEFT", 0, -10)
-	result.problems:SetWidth(RIGHT)
-	result.problems:SetJustifyH("LEFT")
-	result.whatTitle = result:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	result.whatTitle:SetPoint("TOPLEFT", result.problems, "BOTTOMLEFT", 0, -12)
-	result.whatTitle:SetText("What it does")
-	result.explain = result:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	result.explain:SetPoint("TOPLEFT", result.whatTitle, "BOTTOMLEFT", 0, -4)
-	result.explain:SetWidth(RIGHT)
-	result.explain:SetJustifyH("LEFT")
-	result.explain:SetJustifyV("TOP")
+	controls.addLine = flat(column, "+ Add a line", 160, function()
+		macro.lines[#macro.lines + 1] = line("cast")
+		Window.refresh()
+	end, "primary")
+	column:row({ { controls.addLine, 160 } }, 26)
 end
+
+-- --- Getting started and Words explained ---------------------------------------------------------
 
 -- For new players: what a macro is, how to put one in the game, how to use it. It says where to
 -- click in the game's own menus; nothing has to be typed but the macro itself.
-Window.GUIDE = table.concat({
-	"|cffffd100What is a macro?|r",
-	"A macro is a button you make yourself. It holds a few lines of text that tell the game what to do when you press it: cast a spell, cast it on someone in particular, or choose between two spells.",
-	"Each line starts with a / and a word, like /cast. That is how the game reads macros; this addon writes those lines for you.",
-	"",
-	"|cffffd100Make one here|r",
-	"1. On Make a macro, pick an example on the left, or Empty.",
-	"2. Change what you like: click a line's command to pick another, type the spell's name or pick it from Your spells.",
-	"3. On the right you see the finished macro, and in plain words what it does. Red lines are mistakes the game would not accept; fix them first.",
-	"4. Click Select to copy, then press Ctrl+C (Cmd+C on a Mac).",
-	"",
-	"|cffffd100Put it in the game|r",
-	"1. Press Escape to open the Game Menu and choose Macros.",
-	"2. Click New. Pick the question mark icon: the game then shows the spell's own icon.",
-	"3. Give it a name, click Okay.",
-	"4. Click in the big text box at the bottom and press Ctrl+V (Cmd+V) to paste.",
-	"5. Close the window: the macro is saved.",
-	"6. Drag the macro's icon from the window onto one of your action bars. Press it like any spell.",
-	"",
-	"|cffffd100Words you will meet|r",
-	"If / Otherwise, if: a line can try several things in order. The first one whose conditions are true is done; the rest are skipped.",
-	"On (@target, @focus, @mouseover...): who the spell goes to. Without it, it goes to your target.",
-	"Conditions: checks like 'the unit is hostile' or 'you hold Shift'. Tick 'not' to turn one around.",
-	"Mouseover: the unit your mouse pointer is on, a player's portrait or a character in the world.",
-	"Focus: a second target you keep. Right-click a portrait and choose Set Focus.",
-	"",
-	"|cffffd100Good to know|r",
-	"A macro can hold 255 characters. The counter turns red when it is too long.",
-	"Macros cannot do anything you could not do by pressing buttons yourself, and one press does one spell.",
-	"The rules come from World of Warcraft's macro language; WoW Forever's client may differ in places.",
-}, "\n")
+Window.GUIDE = {
+	{ "What is a macro?", table.concat({
+		"A macro is a button you make yourself. It holds a few lines that tell the game what to do",
+		"when you press it: cast a spell, cast it on someone in particular, or choose between two spells.",
+		"Each line starts with a / and a word, like /cast: that is how the game reads macros, and this",
+		"addon writes those lines for you.",
+	}, " ") },
+	{ "Make one here", table.concat({
+		"1. On Make a macro, answer the five questions, or start from an example.",
+		"2. On the right you see the finished macro and, in plain words, what it does. Red lines are mistakes the game would not accept: fix them first.",
+		"3. Click Select to copy, then press Ctrl+C (Cmd+C on a Mac).",
+	}, "\n") },
+	{ "Put it in the game", table.concat({
+		"1. Press Escape to open the Game Menu and choose Macros.",
+		"2. Click New. Pick the question mark icon: the game then shows the spell's own icon.",
+		"3. Give it a name and click Okay.",
+		"4. Click in the big box at the bottom and press Ctrl+V (Cmd+V) to paste.",
+		"5. Close the window: the macro is saved.",
+		"6. Drag the macro's icon onto one of your action bars. Press it like any spell.",
+	}, "\n") },
+	{ "Words you will meet", table.concat({
+		"If and Otherwise, if: a line can try several things in order. The first one whose conditions are true is done; the rest are skipped.",
+		"On (@target, @focus, @mouseover): who the spell goes to. Without it, your target.",
+		"Conditions: checks like 'the target is an enemy' or 'you hold Shift'. 'not' turns one around.",
+		"Mouseover: whatever your mouse pointer is on, a portrait or a character.",
+		"Focus: a second target you keep. Right-click a portrait and choose Set Focus.",
+	}, "\n") },
+	{ "Good to know", table.concat({
+		"A macro can hold 255 characters: the counter turns red when it is too long.",
+		"A macro cannot do anything you could not do by pressing buttons yourself, and one press casts one spell.",
+		"The rules come from World of Warcraft's macro language; WoW Forever's client may differ in places.",
+	}, " ") },
+}
 
-local function textPage(page, words)
-	page.scroll = CreateFrame("ScrollFrame", nil, page, "UIPanelScrollFrameTemplate")
-	page.scroll:SetPoint("TOPLEFT", 0, 0)
-	page.scroll:SetPoint("BOTTOMRIGHT", -26, 0)
-	page.content = CreateFrame("Frame", nil, page.scroll)
-	page.content:SetSize(WIDTH - 90, 1200)
-	page.scroll:SetScrollChild(page.content)
-	page.text = page.content:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	page.text:SetPoint("TOPLEFT", 0, 0)
-	page.text:SetWidth(WIDTH - 100)
-	page.text:SetJustifyH("LEFT")
-	page.text:SetJustifyV("TOP")
-	page.text:SetSpacing(3)
-	page.text:SetText(words)
+local function guidePage(column)
+	column:heading("Getting started")
+	column:paragraph("New to macros? This page is all you need. It takes two minutes.", C.text)
+	for _, section in ipairs(Window.GUIDE) do
+		local card = column:card()
+		card.column:subheading(section[1])
+		card.column:paragraph(section[2], C.text)
+		column:after(card)
+	end
+	column:button("Make a macro", function()
+		Window.select("simple")
+	end, 200, "primary")
 end
 
 -- Every command, condition and target, from the rules themselves.
 function Window.glossary()
-	local said = { "|cffffd100Commands|r (what a line does)" }
+	local said = {}
+	local commandsSaid, conditionsSaid, targetsSaid = {}, {}, {}
 	for _, entry in ipairs(ns.Reference.commands) do
-		said[#said + 1] = "/" .. entry.name .. ": " .. entry.summary
+		commandsSaid[#commandsSaid + 1] = "/" .. entry.name .. ": " .. entry.summary
 	end
-	said[#said + 1] = ""
-	said[#said + 1] = "|cffffd100Conditions|r (checks in [ ]; 'no' in front turns one around)"
 	for _, entry in ipairs(ns.Reference.conditions) do
-		said[#said + 1] = "[" .. entry.name .. "]: " .. entry.summary .. (entry.unconfirmed and (" (" .. entry.unconfirmed .. ")") or "")
+		conditionsSaid[#conditionsSaid + 1] = "[" .. entry.name .. "]: " .. entry.summary .. (entry.unconfirmed and (" (" .. entry.unconfirmed .. ")") or "")
 	end
-	said[#said + 1] = ""
-	said[#said + 1] = "|cffffd100Targets|r (who it goes to, written @name)"
 	for _, entry in ipairs(ns.Reference.units) do
 		local range = entry.range and (" (" .. entry.token .. entry.range[1] .. " to " .. entry.token .. entry.range[2] .. ")") or ""
-		said[#said + 1] = "@" .. entry.token .. range .. ": " .. entry.summary
+		targetsSaid[#targetsSaid + 1] = "@" .. entry.token .. range .. ": " .. entry.summary
 	end
-	said[#said + 1] = "Add 'target' to any of them for its target: @focustarget is the target of your focus."
-	said[#said + 1] = ""
-	said[#said + 1] = "Source: " .. ns.Reference.source
-	return table.concat(said, "\n")
+	targetsSaid[#targetsSaid + 1] = "Add 'target' to any of them for its target: @focustarget is the target of your focus."
+	said[1] = { "Commands (what a line does)", table.concat(commandsSaid, "\n") }
+	said[2] = { "Conditions (checks in [ ]; 'no' in front turns one around)", table.concat(conditionsSaid, "\n") }
+	said[3] = { "Targets (who it goes to, written @name)", table.concat(targetsSaid, "\n") }
+	said[4] = { "Where this comes from", ns.Reference.source }
+	return said
 end
 
-local PAGES = {
-	{ key = "make", title = "Make a macro", build = makePage },
-	{ key = "guide", title = "Getting started", build = function(page)
-		textPage(page, Window.GUIDE)
-	end },
-	{ key = "words", title = "Words explained", build = function(page)
-		textPage(page, Window.glossary())
-	end },
-}
+local function wordsPage(column)
+	column:heading("Words explained")
+	for _, section in ipairs(Window.glossary()) do
+		local card = column:card()
+		card.column:subheading(section[1])
+		card.column:paragraph(section[2], C.text)
+		column:after(card)
+	end
+end
 
 -- --- The window ----------------------------------------------------------------------------------
 
-function Window.render()
+local PAGES = {
+	{ key = "simple", title = "Make a macro", build = simplePage, result = true },
+	{ key = "advanced", title = "Advanced", result = true },
+	{ key = "guide", title = "Getting started", build = guidePage },
+	{ key = "words", title = "Words explained", build = wordsPage },
+}
+
+function Window.refresh()
 	if frame == nil then
 		return
 	end
-	Window.controls = {}
-	renderEditor()
-	local preset = Window.PRESETS[Window.chosenPreset or 0]
-	pages.make.about:SetText(preset and (preset.what .. (preset.use ~= "" and ("\n\n|cffffd100Using it:|r " .. preset.use) or "")) or "Pick an example to start from, or change the one below.")
+	for _, control in pairs(Window.controls.simple or {}) do
+		if type(control) == "table" and type(rawget(control, "refresh")) == "function" then
+			control.refresh()
+		end
+	end
+	renderAdvanced()
 	showResult()
-	db().draft = Window.macro()
 end
 
 function Window.select(key)
 	for name, page in pairs(pages) do
 		if name == key then
 			page:Show()
-			tabs[name]:LockHighlight()
 		else
 			page:Hide()
-			tabs[name]:UnlockHighlight()
 		end
 	end
+	Kit.selectTab(frame, key)
 	Window.current = key
 	ns.Picker.close()
+	local withResult = key == "simple" or key == "advanced"
+	if withResult then
+		result:Show()
+		Window.refresh()
+	else
+		result:Hide()
+	end
 end
 
 local function build()
-	frame = CreateFrame("Frame", "ForeverSimMacrosWindow", UIParent, "BasicFrameTemplateWithInset")
-	frame:SetSize(WIDTH, HEIGHT)
-	frame:SetPoint("CENTER")
-	frame:SetFrameStrata("DIALOG")
-	frame:SetMovable(true)
-	frame:EnableMouse(true)
-	frame:RegisterForDrag("LeftButton")
-	frame:SetScript("OnDragStart", frame.StartMoving)
-	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+	frame = Kit.window("ForeverSimMacrosWindow", "ForeverSim Macros", WIDTH, HEIGHT, PAGES, Window.select)
 	frame:SetScript("OnHide", function()
 		ns.Picker.close()
 	end)
-	tinsert(UISpecialFrames, frame:GetName()) -- Escape closes it
-	frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	frame.title:SetPoint("TOP", 0, -6)
-	frame.title:SetText("ForeverSim Macros")
-	for index, spec in ipairs(PAGES) do
-		local tab = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-		tab:SetSize(150, 24)
-		tab:SetPoint("TOPLEFT", 14 + (index - 1) * 156, -30)
-		tab:SetText(spec.title)
-		tab:SetScript("OnClick", function()
-			Window.select(spec.key)
-		end)
-		tabs[spec.key] = tab
-		local page = CreateFrame("Frame", nil, frame)
-		page:SetPoint("TOPLEFT", 18, -64)
-		page:SetPoint("BOTTOMRIGHT", -18, 14)
-		spec.build(page)
-		page:Hide()
-		pages[spec.key] = page
+	buildResult(frame.body)
+	for _, spec in ipairs(PAGES) do
+		local width = spec.result and (frame.bodyWidth - RESULT - 16) or frame.bodyWidth
+		local holder = CreateFrame("Frame", nil, frame.body)
+		holder:SetPoint("TOPLEFT")
+		holder:SetSize(width, frame.bodyHeight)
+		local page = Kit.scrollPage(holder, width, frame.bodyHeight)
+		page.holder = holder
+		if spec.build then
+			spec.build(page.column)
+		end
+		Window.columns[spec.key] = page.column
+		holder.content = page.content
+		holder.column = page.column
+		holder:Hide()
+		pages[spec.key] = holder
 	end
 	Window.pages = pages
-	Window.render()
 	-- A first visit starts with the guide.
-	Window.select(db().seenGuide and "make" or "guide")
+	Window.select(db().seenGuide and "simple" or "guide")
 	db().seenGuide = true
 end
 
